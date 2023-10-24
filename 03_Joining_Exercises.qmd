@@ -39,14 +39,18 @@ Join together the election results and urban/suburban/rural tables above, and th
 -   group/summarize to calculate the mean pct of Trump 2020 vote by urban/rural categories
 
 ```{r}
-
+county_info_combined <- left_join(counties_elexresults, counties_rural_urban_suburban)
 
 
 
 ```
 
 ```{r}
-
+county_info_combined %>% 
+  filter(state_code == "VA") %>% 
+  group_by(rural_urban) %>% 
+  summarise(mean_vote = mean(pct_r_2020))
+  
 
 
 
@@ -58,17 +62,15 @@ Now using the joined dataset, come up with two groupings you find interesting or
 (i.e. instead of for urban/rural, perhaps you want to look at pct of white college grads in Michigan, etc. If you're having trouble, you can stick with Virginia as your state.)
 
 ```{r}
-
-
-
-
+county_info_combined %>% 
+  group_by(rural_urban, winner_2020) %>% 
+  summarize(count = n())
 ```
 
 
 ```{r}
-
-
-
-
-
+county_info_combined %>% 
+  group_by(rural_urban) %>% 
+  summarize(sd_dem = sd(pct_d_2020),
+            sd_rep = sd(pct_r_2020))
 ```
