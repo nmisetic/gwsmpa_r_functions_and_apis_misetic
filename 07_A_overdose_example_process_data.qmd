@@ -1,0 +1,135 @@
+---
+title: "Overdose Rates Example - Loading/Processing data"
+author: "Aaron Kessler"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    self-contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(tidycensus)
+
+# Source site:
+# https://www.cdc.gov/nchs/nvss/vsrr/prov-county-drug-overdose.htm
+# 
+# Data.gov site - record layout:
+# https://data.cdc.gov/NCHS/VSRR-Provisional-County-Level-Drug-Overdose-Death-/gb4e-yj24/
+
+# Column Name	Description	Type
+# Data as of	Analysis Date	Date & Time
+# Year	Year of death	Plain Text
+# Month	Month of death	Number
+# ST_ABBREV	State of residence abbreviation	Plain Text
+# STATE_NAME	State of residence	Plain Text
+# COUNTYNAME	County of residence	Plain Text
+# FIPS	FIPS state and county code	Plain Text
+# STATEFIPS	FIPS state code	Plain Text
+# COUNTYFIPS	FIPS county code	Plain Text
+# CODE2013	Urban-rural classification is based on the 2013 National Center for Health Statistics Urban-Rural Classification Scheme for Counties	Number
+# Provisional Drug Overdose Deaths	Count of provisional drug overdose deaths	Number
+# Footnote	Suppressed counts (1-9)	Plain Text
+# Percentage Of Records Pending Investigation	Percentage Of Records Pending Investigation	Number
+# HistoricalDataCompletenessNote	Note on 2019 county completeness	Plain Text
+# MonthEndingDate	12 month-ending date	Date & Time
+# Start Date	First month-ending date of reporting period	Date & Time
+# End Date	Last month-ending date of reporting period	Date & Time
+
+
+```
+
+# Overdose Data from CDC
+```{r}
+#import source csv file
+overdose_deaths_raw <- read_csv("data/VSRR_Provisional_County-Level_Drug_Overdose_Death_Counts.csv",
+                                        col_types = cols(.default = "c"))
+```
+
+
+```{r}
+#clean column names
+overdose_deaths <- overdose_deaths_raw %>% 
+  clean_names()
+
+glimpse(overdose_deaths)
+```
+
+
+```{r}
+#format numeric and date columns
+overdose_deaths <- overdose_deaths %>% 
+  mutate(
+    year = as.integer(year),
+    month = as.integer(month),
+    provisional_drug_overdose_deaths = as.numeric(provisional_drug_overdose_deaths),
+    percentage_of_records_pending_investigation = as.numeric(percentage_of_records_pending_investigation),
+    data_as_of = mdy(data_as_of),
+    month_ending_date = mdy(month_ending_date),
+    start_date = mdy(start_date),
+    end_date = mdy(end_date)
+  ) 
+
+glimpse(overdose_deaths)
+```
+
+
+```{r}
+#create 5 digit FIPS from state-county combo
+overdose_deaths <- overdose_deaths %>% 
+  mutate(
+    ap_fips = paste0(statefips, countyfips)
+  )
+```
+
+
+```{r}
+#save results
+saveRDS(overdose_deaths, "data/overdose_deaths_ALL.rds")
+```
+
+
+
+# Census data from Tidycensus
+
+```{r}
+# bring in census county population data
+varlist <- load_variables(2021, "acs5", cache = TRUE)
+```
+
+Total population: B01001_001
+
+```{r}
+# get all states
+county_totalpop <- get_acs(geography = "county",
+              variables = "B01001_001")
+
+glimpse(county_totalpop)
+```
+
+
+```{r}
+#rename and pare down columns
+county_totalpop <- county_totalpop %>% 
+  clean_names() %>% 
+  select(
+    geoid,
+    county_name = name,
+    totalpop = estimate
+  )
+
+county_totalpop
+```
+
+
+```{r}
+#save results 
+saveRDS(county_totalpop, "data/county_totalpop_2021acs5.rds")
+
+```
+
+
