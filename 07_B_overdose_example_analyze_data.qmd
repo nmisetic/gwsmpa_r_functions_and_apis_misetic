@@ -1,0 +1,259 @@
+---
+title: "Overdose Rates Example - Loading/Processing data"
+author: "Aaron Kessler"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    self-contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(janitor)
+library(lubridate)
+
+# import processed data ####
+
+# all overdose deaths, all 12-month lookbacks
+overdose_deaths_all <- readRDS("data/overdose_deaths_ALL.rds")
+overdose_deaths_all
+
+# county populations, 2021 5YR ACS
+county_totalpop <- readRDS("data/county_totalpop_2021acs5.rds")
+county_totalpop
+
+
+```
+
+# Joining
+
+```{r}
+# let's pare down the overdose columns 
+overdose_deaths_all <- overdose_deaths_all %>% 
+  select(
+    ap_fips,
+    state_abbrev = st_abbrev,
+    county_name = countyname,
+    month_ending_date, 
+    provisional_drug_overdose_deaths,
+    footnote,
+    urban_rural_code2013 = code2013,
+    percentage_of_records_pending_investigation,
+    historical_data_completeness_note
+  )
+
+glimpse(overdose_deaths_all)
+```
+
+
+```{r}
+# pare down census pop to just what's needed for joining
+county_totalpop <- county_totalpop %>% 
+  select(geoid, totalpop)
+
+county_totalpop
+```
+
+
+```{r}
+#do the join
+
+joined <- left_join(overdose_deaths_all,
+          county_totalpop,
+          by = c("ap_fips" = "geoid"))
+```
+
+
+```{r}
+# rename table back when ready 
+deaths <- joined
+
+deaths
+```
+
+# Single Year Analysis
+
+```{r}
+deaths_singleyear <- deaths %>% 
+  filter(month_ending_date == "2022-12-31")
+```
+
+
+```{r}
+#highest number of nominal deaths in a county?
+deaths_singleyear %>% 
+  arrange(desc(provisional_drug_overdose_deaths)) %>% 
+  head(20)
+```
+
+This of course doesn't really tell us much, as it's going to skew towards counties with large populations.   
+So we'll calculate per capita rates.
+```{r}
+deaths_singleyear <- deaths_singleyear %>% 
+  mutate(
+    death_per_100K = provisional_drug_overdose_deaths / totalpop * 100000
+  )
+```
+
+
+```{r}
+deaths_singleyear %>% 
+  arrange(desc(death_per_100K))
+```
+
+
+```{r}
+# how many counties don't have deaths at all (because of privacy screen)?
+deaths_singleyear %>% 
+  filter(is.na(provisional_drug_overdose_deaths))
+#quite a lot, more than 1400
+```
+
+
+```{r}
+#what do things look like by urban_rural designation
+deaths_singleyear %>% 
+  group_by(urban_rural_code2013) %>% 
+  summarise(mean(death_per_100K, na.rm = TRUE))
+```
+
+
+```{r}
+deaths_singleyear %>% 
+  group_by(urban_rural_code2013) %>% 
+  summarise(median(death_per_100K, na.rm = TRUE))
+```
+
+
+```{r}
+# there are a lot of counties with 0s too. Should we also take them out, or leave?
+deaths_singleyear %>% 
+  filter(death_per_100K != 0) %>% 
+  group_by(urban_rural_code2013) %>% 
+  summarise(mean(death_per_100K, na.rm = TRUE))
+```
+
+Ah - interesting. This tells a much different picture.   
+Let's figure out how to handle and interpret properly. Consult experts for guidance.
+```{r}
+#save
+saveRDS(deaths_singleyear, "data/deaths_singleyear.rds")
+write_csv(deaths_singleyear, "data/deaths_singleyear.csv")
+```
+
+
+# Yearly Change Over Time Analysis
+
+```{r}
+deaths_compare_years <- deaths %>% 
+  filter(
+    month_ending_date == "2020-01-31" |
+    month_ending_date == "2021-01-31" |
+    month_ending_date == "2022-01-31" |
+    month_ending_date == "2023-01-31" 
+    )
+```
+
+
+```{r}
+deaths_compare_years %>% 
+  count(month_ending_date)
+```
+
+
+```{r}
+#add ratio variable
+deaths_compare_years <- deaths_compare_years %>% 
+  mutate(
+    death_per_100K = provisional_drug_overdose_deaths / totalpop * 100000
+  )
+```
+
+
+```{r}
+#pare down columns
+deaths_compare_years <- deaths_compare_years %>% 
+  select(
+    ap_fips,
+    state_abbrev,
+    county_name,
+    totalpop,
+    urban_rural_code2013,
+    month_ending_date,
+    provisional_drug_overdose_deaths
+  )
+
+deaths_compare_years
+```
+
+
+```{r}
+#reshape to wide
+
+deaths_compare_years <- deaths_compare_years %>% 
+  pivot_wider(names_from = month_ending_date,
+              values_from = provisional_drug_overdose_deaths) %>% 
+  clean_names() %>% 
+  rename(
+    deaths_2019 = x2020_01_31,
+    deaths_2020 = x2021_01_31,
+    deaths_2021 = x2022_01_31,
+    deaths_2022 = x2023_01_31
+  )
+
+deaths_compare_years
+```
+
+
+```{r}
+#remove counties with no deaths or NA screened deaths in 2020
+deaths_compare_years <- deaths_compare_years %>% 
+  filter(
+    !is.na(deaths_2019),
+    deaths_2019 != 0
+  )
+
+deaths_compare_years
+```
+
+
+```{r}
+## calculate pct change in deaths
+#2019-2022 
+deaths_compare_years <- deaths_compare_years %>% 
+  mutate(
+    deaths_pctchg_19to22 = round_half_up((deaths_2022 - deaths_2019) / deaths_2019 * 100, 2)
+    
+  )
+```
+
+
+```{r}
+#any NAs?
+deaths_compare_years %>% 
+  filter(is.na(deaths_pctchg_19to22)) # %>% View()
+
+# a couple dozen. appears to mostly be DECREASING counties where 2022 fell under 10
+# TO DO: investigate what's up with Harris County, TX? It seems to have way to many to suddenly go away
+
+glimpse(deaths_compare_years)
+```
+
+
+```{r}
+# top counties
+deaths_compare_years %>% 
+  arrange(desc(deaths_pctchg_19to22))
+```
+
+
+```{r}
+#save
+saveRDS(deaths_compare_years, "data/deaths_compare_years.rds")
+write_csv(deaths_compare_years, "data/deaths_compare_years.csv")
+
+
+```
+
